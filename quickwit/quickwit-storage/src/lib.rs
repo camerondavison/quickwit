@@ -49,6 +49,7 @@ mod payload;
 mod prefix_storage;
 mod ram_storage;
 mod split;
+mod split_cache;
 mod storage_factory;
 mod storage_resolver;
 mod versioned_component;
