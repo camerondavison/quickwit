@@ -22,7 +22,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use tantivy::directory::OwnedBytes;
@@ -33,25 +33,24 @@ use crate::StorageCache;
 
 pub struct SplitCache {
     root_path: PathBuf,
-    split_state_table: SplitStateTable,
-}
-
-struct LockFile {
-    path: PathBuf,
-    lock: Arc<()>,
+    split_state_table: Arc<RwLock<SplitStateTable>>,
 }
 
 impl SplitCache {
-    pub fn new(root_path: PathBuf, split_state_table: SplitStateTable) -> SplitCache {
+    pub fn noop() -> SplitCache {
+        SplitCache::with_root_path(PathBuf::default())
+    }
+
+    pub fn with_root_path(root_path: PathBuf) -> SplitCache {
         SplitCache {
             root_path,
-            split_state_table,
+            split_state_table: Default::default(),
         }
     }
 }
 
 pub struct SplitFilepath {
-    split_guard: SplitGuard,
+    _split_guard: SplitGuard,
     cached_split_file_path: PathBuf,
 }
 
@@ -69,16 +68,16 @@ impl SplitCache {
     // Returns a split guard object. As long as it is not dropped, the
     // split won't be evinced from the cache.
     fn get_split_guard(&self, split_id: Ulid) -> Option<SplitFilepath> {
-        let split_guard = self.split_state_table.get_split_guard(split_id)?;
+        let split_guard = self
+            .split_state_table
+            .read()
+            .unwrap()
+            .get_split_guard(split_id)?;
         Some(SplitFilepath {
-            split_guard,
+            _split_guard: split_guard,
             cached_split_file_path: self.cached_split_filepath(split_id),
         })
     }
-
-    // async fn acknowledge_split(split_uri: Uri) {
-    //     todo!()
-    // }
 }
 
 fn split_id_from_path(split_path: &Path) -> Option<Ulid> {
@@ -122,6 +121,6 @@ impl StorageCache for SplitCache {
         .ok()?
     }
 
-    async fn put(&self, _path: PathBuf, _byte_range: Range<usize>, bytes: OwnedBytes) {}
+    async fn put(&self, _path: PathBuf, _byte_range: Range<usize>, _bytes: OwnedBytes) {}
     async fn put_all(&self, _path: PathBuf, _bytes: OwnedBytes) {}
 }

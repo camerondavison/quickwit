@@ -51,9 +51,10 @@ use quickwit_proto::opentelemetry::proto::trace::v1::{
     ResourceSpans, ScopeSpans, Span as OtlpSpan, Status as OtlpStatus,
 };
 use quickwit_search::{
-    start_searcher_service, SearchJobPlacer, SearchService, SearchServiceClient, SearcherPool,
+    start_searcher_service, SearchJobPlacer, SearchService, SearchServiceClient, SearcherContext,
+    SearcherPool,
 };
-use quickwit_storage::StorageResolver;
+use quickwit_storage::{SplitCache, StorageResolver};
 use tempfile::TempDir;
 use time::OffsetDateTime;
 use tokio_stream::StreamExt;
@@ -362,11 +363,13 @@ async fn searcher_for_test(
     let searcher_config = SearcherConfig::default();
     let searcher_pool = SearcherPool::default();
     let search_job_placer = SearchJobPlacer::new(searcher_pool.clone());
+    let split_cache = Arc::new(SplitCache::noop());
+    let searcher_context = Arc::new(SearcherContext::new(searcher_config, split_cache));
     let searcher_service = start_searcher_service(
-        searcher_config,
         metastore,
         storage_resolver,
         search_job_placer,
+        searcher_context,
     )
     .await
     .unwrap();

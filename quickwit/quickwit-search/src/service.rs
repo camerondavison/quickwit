@@ -34,7 +34,9 @@ use quickwit_proto::search::{
     LeafSearchStreamResponse, ListTermsRequest, ListTermsResponse, PutKvRequest, ScrollRequest,
     SearchRequest, SearchResponse, SearchStreamRequest, SnippetRequest,
 };
-use quickwit_storage::{MemorySizedCache, QuickwitCache, StorageCache, StorageResolver};
+use quickwit_storage::{
+    MemorySizedCache, QuickwitCache, SplitCache, StorageCache, StorageResolver,
+};
 use tantivy::aggregation::AggregationLimits;
 use tokio::sync::Semaphore;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -138,9 +140,9 @@ impl SearchServiceImpl {
         metastore: Arc<dyn Metastore>,
         storage_resolver: StorageResolver,
         cluster_client: ClusterClient,
-        searcher_config: SearcherConfig,
+        searcher_context: Arc<SearcherContext>,
     ) -> Self {
-        let searcher_context = Arc::new(SearcherContext::new(searcher_config));
+        // let searcher_context = Arc::new(SearcherContext::new(searcher_config));
         SearchServiceImpl {
             metastore,
             storage_resolver,
@@ -175,9 +177,10 @@ impl SearchService for SearchServiceImpl {
         &self,
         leaf_search_request: LeafSearchRequest,
     ) -> crate::Result<LeafSearchResponse> {
-        let search_request = leaf_search_request
+        let search_request: Arc<SearchRequest> = leaf_search_request
             .search_request
-            .ok_or_else(|| SearchError::Internal("No search request.".to_string()))?;
+            .ok_or_else(|| SearchError::Internal("No search request.".to_string()))?
+            .into();
         info!(index=?search_request.index_id_patterns, splits=?leaf_search_request.split_offsets, "leaf_search");
         let storage = self
             .storage_resolver
@@ -188,7 +191,7 @@ impl SearchService for SearchServiceImpl {
 
         let leaf_search_response = leaf_search(
             self.searcher_context.clone(),
-            &search_request,
+            search_request,
             storage.clone(),
             &split_ids[..],
             doc_mapper,
@@ -405,6 +408,7 @@ pub struct SearcherContext {
     pub split_stream_semaphore: Semaphore,
     /// Recent sub-query cache.
     pub leaf_search_cache: LeafSearchCache,
+    pub split_cache: Arc<SplitCache>,
 }
 
 impl std::fmt::Debug for SearcherContext {
@@ -421,7 +425,14 @@ impl std::fmt::Debug for SearcherContext {
 }
 
 impl SearcherContext {
-    pub fn new(searcher_config: SearcherConfig) -> Self {
+    #[cfg(test)]
+    pub fn for_test() -> SearcherContext {
+        let searcher_config = SearcherConfig::default();
+        let split_cache = Arc::new(SplitCache::noop());
+        SearcherContext::new(searcher_config, split_cache)
+    }
+
+    pub fn new(searcher_config: SearcherConfig, split_cache: Arc<SplitCache>) -> Self {
         let capacity_in_bytes = searcher_config.split_footer_cache_capacity.get_bytes() as usize;
         let global_split_footer_cache = MemorySizedCache::with_capacity_in_bytes(
             capacity_in_bytes,
@@ -444,6 +455,7 @@ impl SearcherContext {
             split_footer_cache: global_split_footer_cache,
             split_stream_semaphore,
             leaf_search_cache,
+            split_cache,
         }
     }
     // Returns a new instance to track the aggregation memory usage.

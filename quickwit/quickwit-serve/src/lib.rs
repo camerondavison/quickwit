@@ -45,6 +45,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -62,7 +63,7 @@ use quickwit_common::tower::{
     Rate, RateLimitLayer, SmaRateEstimator,
 };
 use quickwit_config::service::QuickwitService;
-use quickwit_config::{NodeConfig, SearcherConfig};
+use quickwit_config::NodeConfig;
 use quickwit_control_plane::control_plane::ControlPlane;
 use quickwit_control_plane::scheduler::IndexingScheduler;
 use quickwit_control_plane::{
@@ -85,9 +86,9 @@ use quickwit_proto::indexing::IndexingServiceClient;
 use quickwit_proto::metastore::{EntityKind, MetastoreError};
 use quickwit_search::{
     create_search_client_from_channel, start_searcher_service, SearchJobPlacer, SearchService,
-    SearchServiceClient, SearcherPool,
+    SearchServiceClient, SearcherContext, SearcherPool,
 };
-use quickwit_storage::StorageResolver;
+use quickwit_storage::{SplitCache, StorageResolver};
 use tokio::sync::oneshot;
 use tower::timeout::Timeout;
 use tower::ServiceBuilder;
@@ -305,14 +306,20 @@ pub async fn serve_quickwit(
             event_broker.subscribe::<MetastoreEvent>(ControlPlaneEventSubscriber(scheduler_service))
         });
 
-    let searcher_config = config.searcher_config.clone();
     let cluster_change_stream = cluster.ready_nodes_change_stream().await;
 
+    let split_cache_root_directory: PathBuf = config.data_dir_path.join("searcher-split-cache");
+    let split_cache: Arc<SplitCache> =
+        Arc::new(SplitCache::with_root_path(split_cache_root_directory));
+    let searcher_context = Arc::new(SearcherContext::new(
+        config.searcher_config.clone(),
+        split_cache,
+    ));
     let (search_job_placer, search_service) = setup_searcher(
-        searcher_config,
         cluster_change_stream,
         metastore.clone(),
         storage_resolver.clone(),
+        searcher_context,
     )
     .await?;
 
@@ -482,18 +489,18 @@ where R: Rate
 }
 
 async fn setup_searcher(
-    searcher_config: SearcherConfig,
     cluster_change_stream: impl Stream<Item = ClusterChange> + Send + 'static,
     metastore: Arc<dyn Metastore>,
     storage_resolver: StorageResolver,
+    searcher_context: Arc<SearcherContext>,
 ) -> anyhow::Result<(SearchJobPlacer, Arc<dyn SearchService>)> {
     let searcher_pool = SearcherPool::default();
     let search_job_placer = SearchJobPlacer::new(searcher_pool.clone());
     let search_service = start_searcher_service(
-        searcher_config,
         metastore,
         storage_resolver,
         search_job_placer.clone(),
+        searcher_context,
     )
     .await?;
     let search_service_clone = search_service.clone();
@@ -723,6 +730,7 @@ mod tests {
     use chitchat::transport::ChannelTransport;
     use quickwit_cluster::{create_cluster_for_test, ClusterNode};
     use quickwit_common::uri::Uri;
+    use quickwit_config::SearcherConfig;
     use quickwit_metastore::{metastore_for_test, IndexMetadata, ListIndexesQuery, MockMetastore};
     use quickwit_proto::indexing::IndexingTask;
     use quickwit_search::Job;
@@ -854,12 +862,14 @@ mod tests {
     #[tokio::test]
     async fn test_setup_searcher() {
         let searcher_config = SearcherConfig::default();
+        let split_cache = Arc::new(SplitCache::noop());
+        let searcher_context = Arc::new(SearcherContext::new(searcher_config, split_cache));
         let metastore = metastore_for_test();
         let (change_stream_tx, change_stream_rx) = mpsc::unbounded_channel();
         let change_stream = UnboundedReceiverStream::new(change_stream_rx);
         let storage_resolver = StorageResolver::unconfigured();
         let (search_job_placer, _searcher_service) =
-            setup_searcher(searcher_config, change_stream, metastore, storage_resolver)
+            setup_searcher(change_stream, metastore, storage_resolver, searcher_context)
                 .await
                 .unwrap();
 
