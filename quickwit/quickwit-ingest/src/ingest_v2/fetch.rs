@@ -110,15 +110,24 @@ impl FetchTask {
 
     /// Waits for new records. Returns `false` if the ingester is dropped.
     async fn wait_for_new_records(&mut self) -> bool {
-        while self.shard_status_rx.borrow().replication_position_inclusive
-            < *self.fetch_range.start()
-        {
+        loop {
+            let shard_status = self.shard_status_rx.borrow().clone();
+
+            if shard_status.shard_state.is_closed()
+                && shard_status.publish_position_inclusive <= *self.fetch_range.start()
+            {
+                // The shard is closed and we have fetched all records.
+                return false;
+            }
+            if shard_status.replication_position_inclusive >= *self.fetch_range.start() {
+                // The shard is closed and we have fetched all records.
+                return true;
+            }
             if self.shard_status_rx.changed().await.is_err() {
                 // The ingester was dropped.
                 return false;
             }
         }
-        true
     }
 
     async fn run(&mut self) {
@@ -332,6 +341,15 @@ impl MultiFetchStream {
 
     pub async fn next(&mut self) -> Option<IngestV2Result<FetchResponseV2>> {
         self.fetch_response_rx.recv().await
+    }
+
+    pub fn reset(&mut self) {
+        for (_queue_id, fetch_stream_handle) in self.fetch_task_handles.drain() {
+            fetch_stream_handle.abort();
+        }
+        let (fetch_response_tx, fetch_response_rx) = mpsc::channel(3);
+        self.fetch_response_tx = fetch_response_tx;
+        self.fetch_response_rx = fetch_response_rx;
     }
 }
 

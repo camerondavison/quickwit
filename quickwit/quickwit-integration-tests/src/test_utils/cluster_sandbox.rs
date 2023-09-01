@@ -158,8 +158,8 @@ impl ClusterSandbox {
                     let result = serve_quickwit(
                         node_config,
                         runtimes_config,
-                        storage_resolver,
                         metastore_resolver,
+                        storage_resolver,
                         shutdown_signal,
                     )
                     .await?;

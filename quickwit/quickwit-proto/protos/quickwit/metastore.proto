@@ -107,6 +107,8 @@ service MetastoreService {
 
   rpc OpenShards(OpenShardsRequest) returns (OpenShardsResponse);
 
+  rpc AcquireShards(AcquireShardsRequest) returns (AcquireShardsResponse);
+
   rpc CloseShards(CloseShardsRequest) returns (CloseShardsResponse);
 
   rpc DeleteShards(DeleteShardsRequest) returns (DeleteShardsResponse);
@@ -282,6 +284,27 @@ message OpenShardsSubresponse {
     string source_id = 2;
     repeated quickwit.ingest.Shard open_shards = 3;
     uint64 next_shard_id = 4;
+}
+
+message AcquireShardsRequest {
+  repeated AcquireShardsSubrequest subrequests = 1;
+}
+
+message AcquireShardsSubrequest {
+    string index_uid = 1;
+    string source_id = 2;
+    repeated uint64 shard_ids = 3;
+    string publish_token = 4;
+}
+
+message AcquireShardsResponse {
+  repeated AcquireShardsSubresponse subresponses = 1;
+}
+
+message AcquireShardsSubresponse {
+    string index_uid = 1;
+    string source_id = 2;
+    repeated quickwit.ingest.Shard acquired_shards = 3;
 }
 
 message CloseShardsRequest {
