@@ -70,6 +70,8 @@ service SearchService {
   // Gets a key from the local storage of the targetted node.
   // This RPC is used in the mini distributed immutable KV store embedded in quickwit.
   rpc GetKV(GetKVRequest) returns (GetKVResponse);
+
+  rpc ReportSplits(ReportSplitsRequest) returns (ReportSplitsResponse);
 }
 
 /// Scroll Request
@@ -94,6 +96,14 @@ message GetKVRequest {
 message GetKVResponse {
     optional bytes payload = 1;
 }
+
+
+message ReportSplitsRequest {
+    repeated string split_uris = 1;
+}
+
+message ReportSplitsResponse {}
+
 
 // -- Search -------------------
 

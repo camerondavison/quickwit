@@ -169,35 +169,8 @@ pub async fn serve_quickwit(
 
     // Instantiate either a file-backed or postgresql [`Metastore`] if the node runs a `Metastore`
     // service, else instantiate a [`MetastoreGrpcClient`].
-    let metastore: Arc<dyn Metastore> = if config
-        .enabled_services
-        .contains(&QuickwitService::Metastore)
-    {
-        let metastore = metastore_resolver.resolve(&config.metastore_uri).await?;
-        Arc::new(MetastoreEventPublisher::new(
-            metastore,
-            event_broker.clone(),
-        ))
-    } else {
-        // Wait 10 seconds for nodes running a `Metastore` service.
-        cluster
-            .wait_for_ready_members(has_node_with_metastore_service, Duration::from_secs(10))
-            .await
-            .map_err(|_| {
-                error!("No metastore service found among cluster members, stopping server.");
-                anyhow!(
-                    "Failed to start server: no metastore service was found among cluster \
-                     members. Try running Quickwit with additional metastore service `quickwit \
-                     run --service metastore`."
-                )
-            })?;
-        let balance_channel =
-            balance_channel_for_service(&cluster, QuickwitService::Metastore).await;
-        let grpc_metastore_client =
-            MetastoreGrpcClient::from_balance_channel(balance_channel).await?;
-        let metastore_client = RetryingMetastore::new(Box::new(grpc_metastore_client));
-        Arc::new(metastore_client)
-    };
+    let metastore: Arc<dyn Metastore> =
+        get_remote_or_local_metastore(&config, metastore_resolver, &event_broker, &cluster).await?;
 
     check_cluster_configuration(
         &config.enabled_services,
@@ -311,6 +284,7 @@ pub async fn serve_quickwit(
     let split_cache_root_directory: PathBuf = config.data_dir_path.join("searcher-split-cache");
     let split_cache: Arc<SplitCache> =
         Arc::new(SplitCache::with_root_path(split_cache_root_directory));
+
     let searcher_context = Arc::new(SearcherContext::new(
         config.searcher_config.clone(),
         split_cache,
@@ -425,6 +399,40 @@ pub async fn serve_quickwit(
     }
     let actor_exit_statuses = shutdown_handle.await?;
     Ok(actor_exit_statuses)
+}
+
+async fn get_remote_or_local_metastore(
+    config: &NodeConfig,
+    metastore_resolver: MetastoreResolver,
+    event_broker: &EventBroker,
+    cluster: &Cluster,
+) -> anyhow::Result<Arc<dyn Metastore>> {
+    if config
+        .enabled_services
+        .contains(&QuickwitService::Metastore)
+    {
+        let metastore = metastore_resolver.resolve(&config.metastore_uri).await?;
+        return Ok(Arc::new(MetastoreEventPublisher::new(
+            metastore,
+            event_broker.clone(),
+        )));
+    }
+    // Wait 10 seconds for nodes running a `Metastore` service.
+    cluster
+        .wait_for_ready_members(has_node_with_metastore_service, Duration::from_secs(10))
+        .await
+        .map_err(|_| {
+            error!("No metastore service found among cluster members, stopping server.");
+            anyhow!(
+                "Failed to start server: no metastore service was found among cluster members. \
+                 Try running Quickwit with additional metastore service `quickwit run --service \
+                 metastore`."
+            )
+        })?;
+    let balance_channel = balance_channel_for_service(cluster, QuickwitService::Metastore).await;
+    let grpc_metastore_client = MetastoreGrpcClient::from_balance_channel(balance_channel).await?;
+    let metastore_client = RetryingMetastore::new(Box::new(grpc_metastore_client));
+    Ok(Arc::new(metastore_client))
 }
 
 #[derive(Clone)]

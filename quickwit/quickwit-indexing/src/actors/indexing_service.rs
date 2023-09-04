@@ -87,6 +87,12 @@ struct MergePipelineHandle {
     handle: ActorHandle<MergePipeline>,
 }
 
+/// The indexing service is (single) actor service running on indexer and in charge
+/// of executing the indexing plans received from the control plane.
+///
+/// Concretely this means receiving new plans, comparing the current situation
+/// with the target situation, and spawning/shutting down the  indexing pipelines that
+/// are respectively missing or extranumerous.
 pub struct IndexingService {
     node_id: String,
     indexing_root_directory: PathBuf,

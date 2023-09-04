@@ -47,6 +47,8 @@ impl SplitCache {
             split_state_table: Default::default(),
         }
     }
+
+    pub fn report_splits(&self, split_uris: Vec<String>) {}
 }
 
 pub struct SplitFilepath {

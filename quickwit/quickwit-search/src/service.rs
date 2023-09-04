@@ -31,8 +31,9 @@ use quickwit_metastore::Metastore;
 use quickwit_proto::search::{
     FetchDocsRequest, FetchDocsResponse, GetKvRequest, Hit, LeafListTermsRequest,
     LeafListTermsResponse, LeafSearchRequest, LeafSearchResponse, LeafSearchStreamRequest,
-    LeafSearchStreamResponse, ListTermsRequest, ListTermsResponse, PutKvRequest, ScrollRequest,
-    SearchRequest, SearchResponse, SearchStreamRequest, SnippetRequest,
+    LeafSearchStreamResponse, ListTermsRequest, ListTermsResponse, PutKvRequest,
+    ReportSplitsRequest, ReportSplitsResponse, ScrollRequest, SearchRequest, SearchResponse,
+    SearchStreamRequest, SnippetRequest,
 };
 use quickwit_storage::{
     MemorySizedCache, QuickwitCache, SplitCache, StorageCache, StorageResolver,
@@ -132,6 +133,8 @@ pub trait SearchService: 'static + Send + Sync {
     /// Gets the payload associated to a key in the local cache.
     /// See also `put_kv(..)`.
     async fn get_kv(&self, get_kv: GetKvRequest) -> Option<Vec<u8>>;
+
+    async fn report_splits(&self, report_splits: ReportSplitsRequest) -> ReportSplitsResponse;
 }
 
 impl SearchServiceImpl {
@@ -316,6 +319,13 @@ impl SearchService for SearchServiceImpl {
     async fn get_kv(&self, get_request: GetKvRequest) -> Option<Vec<u8>> {
         let payload: Vec<u8> = self.search_after_cache.get(&get_request.key).await?;
         Some(payload)
+    }
+
+    async fn report_splits(&self, report_splits: ReportSplitsRequest) -> ReportSplitsResponse {
+        self.searcher_context
+            .split_cache
+            .report_splits(report_splits.split_uris);
+        ReportSplitsResponse {}
     }
 }
 
