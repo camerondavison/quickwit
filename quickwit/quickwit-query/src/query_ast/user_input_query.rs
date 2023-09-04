@@ -30,7 +30,9 @@ use tantivy::tokenizer::TokenizerManager;
 
 use crate::not_nan_f32::NotNaNf32;
 use crate::query_ast::tantivy_query_ast::TantivyQueryAst;
-use crate::query_ast::{self, BuildTantivyAst, FullTextMode, FullTextParams, QueryAst};
+use crate::query_ast::{
+    self, BuildTantivyAst, FieldPresenceQuery, FullTextMode, FullTextParams, QueryAst,
+};
 use crate::{BooleanOperand, InvalidQuery, JsonLiteral};
 
 const DEFAULT_PHRASE_QUERY_MAX_EXPANSION: u32 = 50;
@@ -160,6 +162,13 @@ fn convert_user_input_ast_to_query_ast(
                 }
                 let term_set_query = query_ast::TermSetQuery { terms_per_field };
                 Ok(term_set_query.into())
+            }
+            UserInputLeaf::Exists { field } => {
+                if let Some(field) = field {
+                    Ok(FieldPresenceQuery { field }.into())
+                } else {
+                    anyhow::bail!("Exists query need to target a specific field.")
+                }
             }
         },
         UserInputAst::Boost(underlying, boost) => {
