@@ -54,7 +54,7 @@ use byte_unit::n_mib_bytes;
 pub use format::BodyFormat;
 use futures::{Stream, StreamExt};
 use itertools::Itertools;
-use quickwit_actors::{ActorExitStatus, Mailbox, Universe};
+use quickwit_actors::{ActorExitStatus, ActorRegistry, Mailbox, Universe};
 use quickwit_cluster::{Cluster, ClusterChange, ClusterMember};
 use quickwit_common::pubsub::{EventBroker, EventSubscriptionHandle};
 use quickwit_common::runtimes::RuntimesConfig;
@@ -69,7 +69,7 @@ use quickwit_control_plane::scheduler::IndexingScheduler;
 use quickwit_control_plane::{
     start_indexing_scheduler, ControlPlaneEventSubscriber, IndexerNodeInfo, IndexerPool,
 };
-use quickwit_index_management::{IndexService, IndexServiceError};
+use quickwit_index_management::{IndexManagementService, IndexServiceError};
 use quickwit_indexing::actors::IndexingService;
 use quickwit_indexing::start_indexing_service;
 use quickwit_ingest::{
@@ -124,7 +124,7 @@ struct QuickwitServices {
     pub indexing_service: Option<Mailbox<IndexingService>>,
     pub janitor_service: Option<Mailbox<JanitorService>>,
     pub ingest_service: IngestServiceClient,
-    pub index_service: Arc<IndexService>,
+    pub index_management_service: Arc<IndexManagementService>,
     pub services: HashSet<QuickwitService>,
 }
 
@@ -164,6 +164,7 @@ pub async fn serve_quickwit(
 ) -> anyhow::Result<HashMap<String, ActorExitStatus>> {
     let universe = Universe::new();
     let event_broker = EventBroker::default();
+
     let cluster =
         quickwit_cluster::start_cluster_service(&config, &config.enabled_services).await?;
 
@@ -180,102 +181,18 @@ pub async fn serve_quickwit(
     .await?;
 
     // Always instantiate index management service.
-    let index_service = Arc::new(IndexService::new(
+    let index_management_service = Arc::new(IndexManagementService::new(
         metastore.clone(),
         storage_resolver.clone(),
     ));
 
-    let (ingest_service, indexing_service) = if config
-        .enabled_services
-        .contains(&QuickwitService::Indexer)
-    {
-        let ingest_api_service =
-            start_ingest_api_service(&universe, &config.data_dir_path, &config.ingest_api_config)
-                .await?;
-        if config.indexer_config.enable_otlp_endpoint {
-            let otel_logs_index_config =
-                OtlpGrpcLogsService::index_config(&config.default_index_root_uri)?;
-            let otel_traces_index_config =
-                OtlpGrpcTracesService::index_config(&config.default_index_root_uri)?;
-            for index_config in [otel_logs_index_config, otel_traces_index_config] {
-                match index_service.create_index(index_config, false).await {
-                    Ok(_)
-                    | Err(IndexServiceError::Metastore(MetastoreError::AlreadyExists(
-                        EntityKind::Index { .. },
-                    ))) => Ok(()),
-                    Err(error) => Err(error),
-                }?;
-            }
-        }
-        let indexing_service = start_indexing_service(
-            &universe,
-            &config,
-            runtimes_config.num_threads_blocking,
-            cluster.clone(),
-            metastore.clone(),
-            ingest_api_service.clone(),
-            storage_resolver.clone(),
-        )
-        .await?;
-        let num_buckets = NonZeroUsize::new(60).unwrap();
-        let initial_rate = ConstantRate::new(n_mib_bytes!(50), Duration::from_secs(1));
-        let rate_estimator = SmaRateEstimator::new(
-            num_buckets,
-            Duration::from_secs(10),
-            Duration::from_millis(100),
-        )
-        .with_initial_rate(initial_rate);
-        let memory_capacity = ingest_api_service.ask(GetMemoryCapacity).await?;
-        let min_rate = ConstantRate::new(n_mib_bytes!(1), Duration::from_millis(100));
-        let rate_modulator = RateModulator::new(rate_estimator.clone(), memory_capacity, min_rate);
-        let ingest_service = IngestServiceClient::tower()
-            .ingest_layer(
-                ServiceBuilder::new()
-                    .layer(EstimateRateLayer::<IngestRequest, _>::new(rate_estimator))
-                    .layer(BufferLayer::new(100))
-                    .layer(RateLimitLayer::new(rate_modulator))
-                    .into_inner(),
-            )
-            .build_from_mailbox(ingest_api_service);
-        (ingest_service, Some(indexing_service))
-    } else {
-        let balance_channel = balance_channel_for_service(&cluster, QuickwitService::Indexer).await;
-        let ingest_service = IngestServiceClient::from_channel(balance_channel);
-        (ingest_service, None)
-    };
-
     // Instantiate the control plane service if enabled.
     // If not and metastore service is enabled, we need to instantiate the control plane client
     // so the metastore can notify the control plane.
-    let control_plane_service: Option<ControlPlaneServiceClient> = if config
-        .enabled_services
-        .contains(&QuickwitService::ControlPlane)
-    {
-        let cluster_change_stream = cluster.ready_nodes_change_stream().await;
-        let control_plane_mailbox = start_control_plane(
-            &universe,
-            cluster.cluster_id().to_string(),
-            cluster.self_node_id().to_string(),
-            cluster_change_stream,
-            indexing_service.clone(),
-            metastore.clone(),
-        )
-        .await?;
-        Some(ControlPlaneServiceClient::from_mailbox(
-            control_plane_mailbox,
-        ))
-    } else if config
-        .enabled_services
-        .contains(&QuickwitService::Metastore)
-    {
-        let balance_channel =
-            balance_channel_for_service(&cluster, QuickwitService::ControlPlane).await;
-        Some(ControlPlaneServiceClient::from_channel(balance_channel))
-    } else {
-        None
-    };
+    let control_plane_service_opt =
+        start_control_plane_if_needed(&config, &cluster, &universe, &metastore).await?;
     let control_plane_subscription_handle =
-        control_plane_service.clone().map(|scheduler_service| {
+        control_plane_service_opt.clone().map(|scheduler_service| {
             event_broker.subscribe::<MetastoreEvent>(ControlPlaneEventSubscriber(scheduler_service))
         });
 
@@ -294,6 +211,17 @@ pub async fn serve_quickwit(
         metastore.clone(),
         storage_resolver.clone(),
         searcher_context,
+    )
+    .await?;
+
+    let ingest_service = start_indexing_service_if_needed(
+        &config,
+        &universe,
+        &index_management_service,
+        runtimes_config,
+        &cluster,
+        &metastore,
+        &storage_resolver,
     )
     .await?;
 
@@ -318,13 +246,13 @@ pub async fn serve_quickwit(
         config: Arc::new(config),
         cluster: cluster.clone(),
         metastore: metastore.clone(),
-        control_plane_service,
+        control_plane_service: control_plane_service_opt,
         control_plane_subscription_handle,
         search_service,
-        indexing_service,
+        indexing_service: universe.spawn_ctx().registry().get_one(),
         janitor_service,
         ingest_service,
-        index_service,
+        index_management_service,
         services,
     });
     // Setup and start gRPC server.
@@ -399,6 +327,113 @@ pub async fn serve_quickwit(
     }
     let actor_exit_statuses = shutdown_handle.await?;
     Ok(actor_exit_statuses)
+}
+
+async fn start_control_plane_if_needed(
+    config: &NodeConfig,
+    cluster: &Cluster,
+    universe: &Universe,
+    metastore: &Arc<dyn Metastore>,
+) -> anyhow::Result<Option<ControlPlaneServiceClient>> {
+    let control_plane_service: Option<ControlPlaneServiceClient> = if config
+        .enabled_services
+        .contains(&QuickwitService::ControlPlane)
+    {
+        let cluster_change_stream = cluster.ready_nodes_change_stream().await;
+        let control_plane_mailbox = start_control_plane(
+            universe,
+            cluster.cluster_id().to_string(),
+            cluster.self_node_id().to_string(),
+            cluster_change_stream,
+            metastore.clone(),
+        )
+        .await?;
+        Some(ControlPlaneServiceClient::from_mailbox(
+            control_plane_mailbox,
+        ))
+    } else if config
+        .enabled_services
+        .contains(&QuickwitService::Metastore)
+    {
+        let balance_channel =
+            balance_channel_for_service(cluster, QuickwitService::ControlPlane).await;
+        Some(ControlPlaneServiceClient::from_channel(balance_channel))
+    } else {
+        None
+    };
+    Ok(control_plane_service)
+}
+
+/// If the node is an indexer, starts the indexer and the ingester services
+/// and return a local client to the ingester service.
+/// If the ndoe is NOT an indexer, just returns a distant client to actual ingester services.
+async fn start_indexing_service_if_needed(
+    config: &NodeConfig,
+    universe: &Universe,
+    index_management_service: &IndexManagementService,
+    runtimes_config: RuntimesConfig,
+    cluster: &Cluster,
+    metastore: &Arc<dyn Metastore>,
+    storage_resolver: &StorageResolver,
+) -> anyhow::Result<IngestServiceClient> {
+    if config.enabled_services.contains(&QuickwitService::Indexer) {
+        let ingest_api_service =
+            start_ingest_api_service(universe, &config.data_dir_path, &config.ingest_api_config)
+                .await?;
+        if config.indexer_config.enable_otlp_endpoint {
+            let otel_logs_index_config =
+                OtlpGrpcLogsService::index_config(&config.default_index_root_uri)?;
+            let otel_traces_index_config =
+                OtlpGrpcTracesService::index_config(&config.default_index_root_uri)?;
+            for index_config in [otel_logs_index_config, otel_traces_index_config] {
+                match index_management_service
+                    .create_index(index_config, false)
+                    .await
+                {
+                    Ok(_)
+                    | Err(IndexServiceError::Metastore(MetastoreError::AlreadyExists(
+                        EntityKind::Index { .. },
+                    ))) => Ok(()),
+                    Err(error) => Err(error),
+                }?;
+            }
+        }
+        start_indexing_service(
+            universe,
+            config,
+            runtimes_config.num_threads_blocking,
+            cluster.clone(),
+            metastore.clone(),
+            ingest_api_service.clone(),
+            storage_resolver.clone(),
+        )
+        .await?;
+        let num_buckets = NonZeroUsize::new(60).unwrap();
+        let initial_rate = ConstantRate::new(n_mib_bytes!(50), Duration::from_secs(1));
+        let rate_estimator = SmaRateEstimator::new(
+            num_buckets,
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+        )
+        .with_initial_rate(initial_rate);
+        let memory_capacity = ingest_api_service.ask(GetMemoryCapacity).await?;
+        let min_rate = ConstantRate::new(n_mib_bytes!(1), Duration::from_millis(100));
+        let rate_modulator = RateModulator::new(rate_estimator.clone(), memory_capacity, min_rate);
+        let ingest_service = IngestServiceClient::tower()
+            .ingest_layer(
+                ServiceBuilder::new()
+                    .layer(EstimateRateLayer::<IngestRequest, _>::new(rate_estimator))
+                    .layer(BufferLayer::new(100))
+                    .layer(RateLimitLayer::new(rate_modulator))
+                    .into_inner(),
+            )
+            .build_from_mailbox(ingest_api_service);
+        Ok(ingest_service)
+    } else {
+        let balance_channel = balance_channel_for_service(cluster, QuickwitService::Indexer).await;
+        let ingest_service = IngestServiceClient::from_channel(balance_channel);
+        Ok(ingest_service)
+    }
 }
 
 async fn get_remote_or_local_metastore(
@@ -546,7 +581,6 @@ async fn start_control_plane(
     cluster_id: String,
     self_node_id: String,
     cluster_change_stream: impl Stream<Item = ClusterChange> + Send + 'static,
-    indexing_service: Option<Mailbox<IndexingService>>,
     metastore: Arc<dyn Metastore>,
 ) -> anyhow::Result<Mailbox<ControlPlane>> {
     let scheduler = setup_indexing_scheduler(
@@ -554,7 +588,6 @@ async fn start_control_plane(
         cluster_id,
         self_node_id,
         cluster_change_stream,
-        indexing_service,
         metastore,
     )
     .await?;
@@ -565,12 +598,11 @@ async fn start_control_plane(
 
 fn setup_indexer_pool(
     cluster_change_stream: impl Stream<Item = ClusterChange> + Send + 'static,
-    indexing_service: Option<Mailbox<IndexingService>>,
+    registry: ActorRegistry,
 ) -> IndexerPool {
     let indexer_pool = IndexerPool::default();
-
     let indexer_change_stream = cluster_change_stream.filter_map(move |cluster_change| {
-        let indexing_service_clone = indexing_service.clone();
+        let registry_clone = registry.clone();
         Box::pin(async move {
             match cluster_change {
                 ClusterChange::Add(node) | ClusterChange::Update(node)
@@ -580,7 +612,9 @@ fn setup_indexer_pool(
                     let indexing_tasks = node.indexing_tasks().to_vec();
 
                     if node.is_self_node() {
-                        if let Some(indexing_service_clone) = indexing_service_clone {
+                        if let Some(indexing_service_clone) =
+                            registry_clone.get_one::<IndexingService>()
+                        {
                             let client =
                                 IndexingServiceClient::from_mailbox(indexing_service_clone);
                             Some(Change::Insert(
@@ -621,10 +655,12 @@ async fn setup_indexing_scheduler(
     cluster_id: String,
     self_node_id: String,
     cluster_change_stream: impl Stream<Item = ClusterChange> + Send + 'static,
-    indexing_service: Option<Mailbox<IndexingService>>,
     metastore: Arc<dyn Metastore>,
 ) -> anyhow::Result<Mailbox<IndexingScheduler>> {
-    let indexer_pool = setup_indexer_pool(cluster_change_stream, indexing_service);
+    let indexer_pool = setup_indexer_pool(
+        cluster_change_stream,
+        universe.spawn_ctx().registry().clone(),
+    );
     let indexing_scheduler = start_indexing_scheduler(
         cluster_id,
         self_node_id,

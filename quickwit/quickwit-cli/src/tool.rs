@@ -41,7 +41,7 @@ use quickwit_config::{
     IndexerConfig, NodeConfig, SourceConfig, SourceInputFormat, SourceParams, TransformConfig,
     VecSourceParams, CLI_INGEST_SOURCE_ID,
 };
-use quickwit_index_management::{clear_cache_directory, IndexService};
+use quickwit_index_management::{clear_cache_directory, IndexManagementService};
 use quickwit_indexing::actors::{IndexingService, MergePipeline, MergePipelineId};
 use quickwit_indexing::models::{
     DetachIndexingPipeline, DetachMergePipeline, IndexingStatistics, SpawnPipeline,
@@ -434,7 +434,8 @@ pub async fn local_ingest_docs_cli(args: LocalIngestDocsArgs) -> anyhow::Result<
     .await?;
 
     if args.overwrite {
-        let index_service = IndexService::new(metastore.clone(), storage_resolver.clone());
+        let index_service =
+            IndexManagementService::new(metastore.clone(), storage_resolver.clone());
         index_service.clear_index(&args.index_id).await?;
     }
     // The indexing service needs to update its cluster chitchat state so that the control plane is
@@ -650,7 +651,7 @@ pub async fn garbage_collect_index_cli(args: GarbageCollectIndexArgs) -> anyhow:
     let (storage_resolver, metastore_resolver) =
         get_resolvers(&config.storage_configs, &config.metastore_configs);
     let metastore = metastore_resolver.resolve(&config.metastore_uri).await?;
-    let index_service = IndexService::new(metastore, storage_resolver);
+    let index_service = IndexManagementService::new(metastore, storage_resolver);
     let removal_info = index_service
         .garbage_collect_index(&args.index_id, args.grace_period, args.dry_run)
         .await?;

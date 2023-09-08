@@ -27,7 +27,7 @@ use quickwit_config::{
     CLI_INGEST_SOURCE_ID, INGEST_API_SOURCE_ID,
 };
 use quickwit_doc_mapper::{analyze_text, TokenizerConfig};
-use quickwit_index_management::{IndexService, IndexServiceError};
+use quickwit_index_management::{IndexManagementService, IndexServiceError};
 use quickwit_metastore::{
     IndexMetadata, ListIndexesQuery, ListSplitsQuery, Metastore, Split, SplitInfo, SplitState,
 };
@@ -64,7 +64,7 @@ use crate::with_arg;
 pub struct IndexApi;
 
 pub fn index_management_handlers(
-    index_service: Arc<IndexService>,
+    index_service: Arc<IndexManagementService>,
     node_config: Arc<NodeConfig>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     // Indexes handlers.
@@ -387,7 +387,7 @@ struct CreateIndexQueryParams {
 }
 
 fn create_index_handler(
-    index_service: Arc<IndexService>,
+    index_service: Arc<IndexManagementService>,
     node_config: Arc<NodeConfig>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     warp::path!("indexes")
@@ -421,7 +421,7 @@ async fn create_index(
     create_index_query_params: CreateIndexQueryParams,
     config_format: ConfigFormat,
     index_config_bytes: Bytes,
-    index_service: Arc<IndexService>,
+    index_service: Arc<IndexManagementService>,
     node_config: Arc<NodeConfig>,
 ) -> Result<IndexMetadata, IndexServiceError> {
     let index_config = quickwit_config::load_index_config_from_user_config(
@@ -437,7 +437,7 @@ async fn create_index(
 }
 
 fn clear_index_handler(
-    index_service: Arc<IndexService>,
+    index_service: Arc<IndexManagementService>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     warp::path!("indexes" / String / "clear")
         .and(warp::put())
@@ -462,7 +462,7 @@ fn clear_index_handler(
 /// configuration. (See also, `delete-index`).
 async fn clear_index(
     index_id: String,
-    index_service: Arc<IndexService>,
+    index_service: Arc<IndexManagementService>,
 ) -> Result<(), IndexServiceError> {
     info!(index_id = %index_id, "clear-index");
     index_service.clear_index(&index_id).await
@@ -476,7 +476,7 @@ struct DeleteIndexQueryParam {
 }
 
 fn delete_index_handler(
-    index_service: Arc<IndexService>,
+    index_service: Arc<IndexManagementService>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     warp::path!("indexes" / String)
         .and(warp::delete())
@@ -504,7 +504,7 @@ fn delete_index_handler(
 async fn delete_index(
     index_id: String,
     delete_index_query_param: DeleteIndexQueryParam,
-    index_service: Arc<IndexService>,
+    index_service: Arc<IndexManagementService>,
 ) -> Result<Vec<SplitInfo>, IndexServiceError> {
     info!(index_id = %index_id, dry_run = delete_index_query_param.dry_run, "delete-index");
     index_service
@@ -513,7 +513,7 @@ async fn delete_index(
 }
 
 fn create_source_handler(
-    index_service: Arc<IndexService>,
+    index_service: Arc<IndexManagementService>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     warp::path!("indexes" / String / "sources")
         .and(warp::post())
@@ -544,7 +544,7 @@ async fn create_source(
     index_id: String,
     config_format: ConfigFormat,
     source_config_bytes: Bytes,
-    index_service: Arc<IndexService>,
+    index_service: Arc<IndexManagementService>,
 ) -> Result<SourceConfig, IndexServiceError> {
     let source_config: SourceConfig =
         load_source_config_from_user_config(config_format, &source_config_bytes)
@@ -792,7 +792,8 @@ mod tests {
                     "ram:///indexes/test-index",
                 ))
             });
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -818,7 +819,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_non_existing_index() {
         let metastore = metastore_for_test();
-        let index_service = IndexService::new(metastore, StorageResolver::unconfigured());
+        let index_service = IndexManagementService::new(metastore, StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -861,7 +862,8 @@ mod tests {
                 })
             })
             .times(2);
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -930,7 +932,8 @@ mod tests {
                 })
             });
 
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -983,7 +986,8 @@ mod tests {
                     cause: "".to_string(),
                 })
             });
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1022,7 +1026,8 @@ mod tests {
                 })
             })
             .times(2);
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1058,7 +1063,8 @@ mod tests {
                 )])
             },
         );
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1107,7 +1113,8 @@ mod tests {
         metastore
             .expect_reset_source_checkpoint()
             .return_once(|_index_id: IndexUid, _source_id: &str| Ok(()));
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1150,7 +1157,8 @@ mod tests {
         metastore
             .expect_delete_index()
             .return_once(|_index_uid: IndexUid| Ok(()));
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1190,7 +1198,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_on_non_existing_index() {
         let metastore = metastore_for_test();
-        let index_service = IndexService::new(metastore, StorageResolver::unconfigured());
+        let index_service = IndexManagementService::new(metastore, StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1207,7 +1215,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_index_with_overwrite() {
         let metastore = metastore_for_test();
-        let index_service = IndexService::new(metastore.clone(), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(metastore.clone(), StorageResolver::unconfigured());
         let mut node_config = NodeConfig::for_test();
         node_config.default_index_root_uri =
             Uri::from_well_formed("file:///default-index-root-uri");
@@ -1248,7 +1257,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_delete_index_and_source() {
         let metastore = metastore_for_test();
-        let index_service = IndexService::new(metastore.clone(), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(metastore.clone(), StorageResolver::unconfigured());
         let mut node_config = NodeConfig::for_test();
         node_config.default_index_root_uri =
             Uri::from_well_formed("file:///default-index-root-uri");
@@ -1359,7 +1369,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_file_source_returns_405() {
         let metastore = metastore_for_test();
-        let index_service = IndexService::new(metastore.clone(), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(metastore.clone(), StorageResolver::unconfigured());
         let mut node_config = NodeConfig::for_test();
         node_config.default_index_root_uri =
             Uri::from_well_formed("file:///default-index-root-uri");
@@ -1381,7 +1392,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_index_with_yaml() {
         let metastore = metastore_for_test();
-        let index_service = IndexService::new(metastore.clone(), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(metastore.clone(), StorageResolver::unconfigured());
         let mut node_config = NodeConfig::for_test();
         node_config.default_index_root_uri =
             Uri::from_well_formed("file:///default-index-root-uri");
@@ -1420,7 +1432,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_index_and_source_with_toml() {
         let metastore = metastore_for_test();
-        let index_service = IndexService::new(metastore.clone(), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(metastore.clone(), StorageResolver::unconfigured());
         let mut node_config = NodeConfig::for_test();
         node_config.default_index_root_uri =
             Uri::from_well_formed("file:///default-index-root-uri");
@@ -1457,7 +1470,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_index_with_wrong_content_type() {
         let metastore = metastore_for_test();
-        let index_service = IndexService::new(metastore.clone(), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(metastore.clone(), StorageResolver::unconfigured());
         let mut node_config = NodeConfig::for_test();
         node_config.default_index_root_uri =
             Uri::from_well_formed("file:///default-index-root-uri");
@@ -1479,7 +1493,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_index_with_bad_config() -> anyhow::Result<()> {
         let metastore = MockMetastore::new();
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1505,7 +1520,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_source_with_bad_config() {
         let metastore = metastore_for_test();
-        let index_service = IndexService::new(metastore, StorageResolver::unconfigured());
+        let index_service = IndexManagementService::new(metastore, StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1564,7 +1579,8 @@ mod tests {
                     source_id: source_id.to_string(),
                 }))
             });
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1602,7 +1618,8 @@ mod tests {
                 })
             })
             .times(2);
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1649,7 +1666,8 @@ mod tests {
                 })
             },
         );
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),
@@ -1708,7 +1726,8 @@ mod tests {
                     "ram:///indexes/test-index",
                 ))
             });
-        let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
+        let index_service =
+            IndexManagementService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(
             Arc::new(index_service),
             Arc::new(NodeConfig::for_test()),

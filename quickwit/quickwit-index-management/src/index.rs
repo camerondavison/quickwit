@@ -71,12 +71,12 @@ impl ServiceError for IndexServiceError {
 }
 
 /// Index service responsible for creating, updating and deleting indexes.
-pub struct IndexService {
+pub struct IndexManagementService {
     metastore: Arc<dyn Metastore>,
     storage_resolver: StorageResolver,
 }
 
-impl IndexService {
+impl IndexManagementService {
     /// Creates an `IndexService`.
     pub fn new(metastore: Arc<dyn Metastore>, storage_resolver: StorageResolver) -> Self {
         Self {
@@ -365,7 +365,7 @@ mod tests {
     async fn test_create_index() {
         let metastore = metastore_for_test();
         let storage_resolver = StorageResolver::ram_for_test();
-        let index_service = IndexService::new(metastore.clone(), storage_resolver);
+        let index_service = IndexManagementService::new(metastore.clone(), storage_resolver);
         let index_id = "test-index";
         let index_uri = "ram://indexes/test-index";
         let index_config = IndexConfig::for_test(index_id, index_uri);
@@ -405,7 +405,7 @@ mod tests {
             .resolve(&Uri::for_test("ram://indexes/test-index"))
             .await
             .unwrap();
-        let index_service = IndexService::new(metastore.clone(), storage_resolver);
+        let index_service = IndexManagementService::new(metastore.clone(), storage_resolver);
         let index_id = "test-index";
         let index_uri = "ram://indexes/test-index";
         let index_config = IndexConfig::for_test(index_id, index_uri);
