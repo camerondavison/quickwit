@@ -21,8 +21,11 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use quickwit_actors::{Mailbox, Universe};
 use quickwit_cluster::Cluster;
+use quickwit_common::pubsub::EventBroker;
+use quickwit_common::uri::Uri;
 use quickwit_config::NodeConfig;
 use quickwit_ingest::IngestApiService;
 use quickwit_metastore::Metastore;
@@ -70,6 +73,7 @@ pub async fn start_indexing_service(
     metastore: Arc<dyn Metastore>,
     ingest_api_service: Mailbox<IngestApiService>,
     storage_resolver: StorageResolver,
+    event_broker: EventBroker,
 ) -> anyhow::Result<Mailbox<IndexingService>> {
     info!("Starting indexer service.");
 
@@ -83,6 +87,7 @@ pub async fn start_indexing_service(
         metastore.clone(),
         Some(ingest_api_service),
         storage_resolver,
+        event_broker,
     )
     .await?;
     let (indexing_service, _) = universe.spawn_builder().spawn(indexing_service);

@@ -29,8 +29,11 @@ use fail::fail_point;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use quickwit_actors::{Actor, ActorContext, ActorExitStatus, Handler, Mailbox, QueueCapacity};
+use quickwit_common::pubsub::EventBroker;
+use quickwit_common::uri::Uri;
 use quickwit_metastore::checkpoint::IndexCheckpointDelta;
 use quickwit_metastore::{Metastore, SplitMetadata};
+use quickwit_proto::search::ReportSplitsRequest;
 use quickwit_proto::IndexUid;
 use quickwit_storage::SplitPayloadBuilder;
 use serde::Serialize;
@@ -168,6 +171,7 @@ pub struct Uploader {
     split_update_mailbox: SplitsUpdateMailbox,
     max_concurrent_split_uploads: usize,
     counters: UploaderCounters,
+    event_broker: EventBroker,
 }
 
 impl Uploader {
@@ -178,6 +182,7 @@ impl Uploader {
         split_store: IndexingSplitStore,
         split_update_mailbox: SplitsUpdateMailbox,
         max_concurrent_split_uploads: usize,
+        event_broker: EventBroker,
     ) -> Uploader {
         Uploader {
             uploader_type,
@@ -187,6 +192,7 @@ impl Uploader {
             split_update_mailbox,
             max_concurrent_split_uploads,
             counters: Default::default(),
+            event_broker,
         }
     }
     async fn acquire_semaphore(
@@ -296,6 +302,7 @@ impl Handler<PackagedSplitBatch> for Uploader {
         let ctx_clone = ctx.clone();
         let merge_policy = self.merge_policy.clone();
         info!(split_ids=?split_ids, "start-stage-and-store-splits");
+        let event_broker = self.event_broker.clone();
         tokio::spawn(
             async move {
                 fail_point!("uploader:intask:before");
@@ -329,6 +336,17 @@ impl Handler<PackagedSplitBatch> for Uploader {
                 counters.num_staged_splits.fetch_add(split_metadata_list.len() as u64, Ordering::SeqCst);
 
                 let mut packaged_splits_and_metadata = Vec::with_capacity(batch.splits.len());
+
+                let split_uris: Vec<String> = batch.splits.iter()
+                    .map(|split| {
+                        let split_id = split.split_id();
+                        split_store.distant_uri(split_id).to_string()
+                    })
+                    .collect();
+                event_broker.publish(ReportSplitsRequest {
+                    split_uris
+                });
+
                 for (packaged_split, metadata) in batch.splits.into_iter().zip(split_metadata_list) {
                     let upload_result = upload_split(
                         &packaged_split,
@@ -499,7 +517,7 @@ mod tests {
             .returning(|_, _| Ok(()));
         let ram_storage = RamStorage::default();
         let split_store =
-            IndexingSplitStore::create_without_local_store(Arc::new(ram_storage.clone()));
+            IndexingSplitStore::create_without_local_store_for_test(Arc::new(ram_storage.clone()));
         let merge_policy = Arc::new(NopMergePolicy);
         let uploader = Uploader::new(
             UploaderType::IndexUploader,
@@ -609,7 +627,7 @@ mod tests {
             .returning(|_, _| Ok(()));
         let ram_storage = RamStorage::default();
         let split_store =
-            IndexingSplitStore::create_without_local_store(Arc::new(ram_storage.clone()));
+            IndexingSplitStore::create_without_local_store_for_test(Arc::new(ram_storage.clone()));
         let merge_policy = Arc::new(NopMergePolicy);
         let uploader = Uploader::new(
             UploaderType::IndexUploader,
@@ -747,7 +765,7 @@ mod tests {
             .returning(|_, _| Ok(()));
         let ram_storage = RamStorage::default();
         let split_store =
-            IndexingSplitStore::create_without_local_store(Arc::new(ram_storage.clone()));
+            IndexingSplitStore::create_without_local_store_for_test(Arc::new(ram_storage.clone()));
         let merge_policy = Arc::new(NopMergePolicy);
         let uploader = Uploader::new(
             UploaderType::IndexUploader,
@@ -815,7 +833,7 @@ mod tests {
         mock_metastore.expect_stage_splits().never();
         let ram_storage = RamStorage::default();
         let split_store =
-            IndexingSplitStore::create_without_local_store(Arc::new(ram_storage.clone()));
+            IndexingSplitStore::create_without_local_store_for_test(Arc::new(ram_storage.clone()));
         let uploader = Uploader::new(
             UploaderType::IndexUploader,
             Arc::new(mock_metastore),

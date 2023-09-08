@@ -19,11 +19,15 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 
 use anyhow::bail;
+use async_trait::async_trait;
+use quickwit_common::pubsub::EventSubscriber;
 use quickwit_common::rendezvous_hasher::sort_by_rendez_vous_hash;
+use quickwit_metastore::MetastoreEvent;
 
 use crate::{SearchServiceClient, SearcherPool};
 
@@ -57,6 +61,12 @@ pub trait Job {
 pub struct SearchJobPlacer {
     /// Search clients pool.
     searcher_pool: SearcherPool,
+}
+
+impl fmt::Debug for SearchJobPlacer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SearchJobPlacer").finish()
+    }
 }
 
 impl SearchJobPlacer {
@@ -172,6 +182,11 @@ impl SearchJobPlacer {
             .expect("`assign_jobs` should return at least one client or fail.");
         Ok(client)
     }
+}
+
+#[async_trait]
+impl EventSubscriber<MetastoreEvent> for SearchJobPlacer {
+    async fn handle_event(&mut self, event: MetastoreEvent) {}
 }
 
 #[derive(Debug, Clone)]

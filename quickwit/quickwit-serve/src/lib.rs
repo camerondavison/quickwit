@@ -38,6 +38,7 @@ mod json_api_response;
 mod metrics_api;
 mod node_info_handler;
 mod openapi;
+mod rate_modulator;
 mod search_api;
 mod ui_handler;
 
@@ -60,7 +61,7 @@ use quickwit_common::pubsub::{EventBroker, EventSubscriptionHandle};
 use quickwit_common::runtimes::RuntimesConfig;
 use quickwit_common::tower::{
     BalanceChannel, BoxFutureInfaillible, BufferLayer, Change, ConstantRate, EstimateRateLayer,
-    Rate, RateLimitLayer, SmaRateEstimator,
+    RateLimitLayer, SmaRateEstimator,
 };
 use quickwit_config::service::QuickwitService;
 use quickwit_config::NodeConfig;
@@ -73,7 +74,7 @@ use quickwit_index_management::{IndexManagementService, IndexServiceError};
 use quickwit_indexing::actors::IndexingService;
 use quickwit_indexing::start_indexing_service;
 use quickwit_ingest::{
-    start_ingest_api_service, GetMemoryCapacity, IngestRequest, IngestServiceClient, MemoryCapacity,
+    start_ingest_api_service, GetMemoryCapacity, IngestRequest, IngestServiceClient,
 };
 use quickwit_janitor::{start_janitor_service, JanitorService};
 use quickwit_metastore::{
@@ -98,6 +99,7 @@ use warp::{Filter, Rejection};
 pub use crate::build_info::{BuildInfo, RuntimeInfo};
 pub use crate::index_api::ListSplitsQueryParams;
 pub use crate::metrics::SERVE_METRICS;
+use crate::rate_modulator::RateModulator;
 #[cfg(test)]
 use crate::rest::recover_fn;
 pub use crate::search_api::{search_request_from_api_request, SearchRequestQueryString, SortBy};
@@ -222,22 +224,21 @@ pub async fn serve_quickwit(
         &cluster,
         &metastore,
         &storage_resolver,
+        event_broker.clone(),
     )
     .await?;
 
-    let janitor_service = if config.enabled_services.contains(&QuickwitService::Janitor) {
-        let janitor_service = start_janitor_service(
+    if config.enabled_services.contains(&QuickwitService::Janitor) {
+        start_janitor_service(
             &universe,
             &config,
             metastore.clone(),
             search_job_placer,
             storage_resolver.clone(),
+            event_broker,
         )
         .await?;
-        Some(janitor_service)
-    } else {
-        None
-    };
+    }
 
     let grpc_listen_addr = config.grpc_listen_addr;
     let rest_listen_addr = config.rest_listen_addr;
@@ -250,7 +251,7 @@ pub async fn serve_quickwit(
         control_plane_subscription_handle,
         search_service,
         indexing_service: universe.spawn_ctx().registry().get_one(),
-        janitor_service,
+        janitor_service: universe.spawn_ctx().registry().get_one(),
         ingest_service,
         index_management_service,
         services,
@@ -375,6 +376,7 @@ async fn start_indexing_service_if_needed(
     cluster: &Cluster,
     metastore: &Arc<dyn Metastore>,
     storage_resolver: &StorageResolver,
+    event_broker: EventBroker,
 ) -> anyhow::Result<IngestServiceClient> {
     if config.enabled_services.contains(&QuickwitService::Indexer) {
         let ingest_api_service =
@@ -406,6 +408,7 @@ async fn start_indexing_service_if_needed(
             metastore.clone(),
             ingest_api_service.clone(),
             storage_resolver.clone(),
+            event_broker,
         )
         .await?;
         let num_buckets = NonZeroUsize::new(60).unwrap();
@@ -468,67 +471,6 @@ async fn get_remote_or_local_metastore(
     let grpc_metastore_client = MetastoreGrpcClient::from_balance_channel(balance_channel).await?;
     let metastore_client = RetryingMetastore::new(Box::new(grpc_metastore_client));
     Ok(Arc::new(metastore_client))
-}
-
-#[derive(Clone)]
-struct RateModulator<R> {
-    rate_estimator: R,
-    memory_capacity: MemoryCapacity,
-    min_rate: ConstantRate,
-}
-
-impl<R> RateModulator<R>
-where R: Rate
-{
-    /// Creates a new [`RateModulator`] instance.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `rate_estimator` and `min_rate` have different periods.
-    pub fn new(rate_estimator: R, memory_capacity: MemoryCapacity, min_rate: ConstantRate) -> Self {
-        assert_eq!(
-            rate_estimator.period(),
-            min_rate.period(),
-            "Rate estimator and min rate periods must be equal."
-        );
-
-        Self {
-            rate_estimator,
-            memory_capacity,
-            min_rate,
-        }
-    }
-}
-
-impl<R> Rate for RateModulator<R>
-where R: Rate
-{
-    fn work(&self) -> u64 {
-        let memory_usage_ratio = self.memory_capacity.usage_ratio();
-        let work = self.rate_estimator.work().max(self.min_rate.work());
-
-        if memory_usage_ratio < 0.25 {
-            work * 2
-        } else if memory_usage_ratio > 0.99 {
-            work / 32
-        } else if memory_usage_ratio > 0.98 {
-            work / 16
-        } else if memory_usage_ratio > 0.95 {
-            work / 8
-        } else if memory_usage_ratio > 0.90 {
-            work / 4
-        } else if memory_usage_ratio > 0.80 {
-            work / 2
-        } else if memory_usage_ratio > 0.70 {
-            work * 2 / 3
-        } else {
-            work
-        }
-    }
-
-    fn period(&self) -> Duration {
-        self.rate_estimator.period()
-    }
 }
 
 async fn setup_searcher(
