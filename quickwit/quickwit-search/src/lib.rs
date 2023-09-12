@@ -63,7 +63,7 @@ use quickwit_doc_mapper::tag_pruning::TagFilterAst;
 use quickwit_metastore::{ListSplitsQuery, Metastore, SplitMetadata, SplitState};
 use quickwit_proto::search::{PartialHit, SearchRequest, SearchResponse, SplitIdAndFooterOffsets};
 use quickwit_proto::IndexUid;
-use quickwit_storage::{SplitCache, StorageResolver};
+use quickwit_storage::StorageResolver;
 pub use service::SearcherContext;
 use tantivy::DocAddress;
 
@@ -192,9 +192,8 @@ pub async fn single_node_search(
     let searcher_pool = SearcherPool::default();
     let search_job_placer = SearchJobPlacer::new(searcher_pool.clone());
     let cluster_client = ClusterClient::new(search_job_placer);
-    let split_cache = Arc::new(SplitCache::noop());
     let searcher_config = SearcherConfig::default();
-    let searcher_context = Arc::new(SearcherContext::new(searcher_config, split_cache.clone()));
+    let searcher_context = Arc::new(SearcherContext::new(searcher_config, None));
     let search_service = Arc::new(SearchServiceImpl::new(
         metastore.clone(),
         storage_resolver,

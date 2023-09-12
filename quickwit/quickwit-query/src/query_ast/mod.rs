@@ -38,6 +38,7 @@ pub use bool_query::BoolQuery;
 pub use field_presence::FieldPresenceQuery;
 pub use full_text_query::{FullTextMode, FullTextParams, FullTextQuery};
 pub use phrase_prefix_query::PhrasePrefixQuery;
+use quickwit_common::NotNaNf32;
 pub use range_query::RangeQuery;
 use tantivy_query_ast::TantivyQueryAst;
 pub use term_query::TermQuery;
@@ -45,7 +46,7 @@ pub use term_set_query::TermSetQuery;
 pub use user_input_query::UserInputQuery;
 pub use visitor::QueryAstVisitor;
 
-use crate::{BooleanOperand, InvalidQuery, NotNaNf32};
+use crate::{BooleanOperand, InvalidQuery};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "type")]

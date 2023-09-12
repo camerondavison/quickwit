@@ -30,10 +30,9 @@ use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use quickwit_actors::{Actor, ActorContext, ActorExitStatus, Handler, Mailbox, QueueCapacity};
 use quickwit_common::pubsub::EventBroker;
-use quickwit_common::uri::Uri;
 use quickwit_metastore::checkpoint::IndexCheckpointDelta;
 use quickwit_metastore::{Metastore, SplitMetadata};
-use quickwit_proto::search::ReportSplitsRequest;
+use quickwit_proto::search::{ReportSplit, ReportSplitsRequest};
 use quickwit_proto::IndexUid;
 use quickwit_storage::SplitPayloadBuilder;
 use serde::Serialize;
@@ -308,6 +307,8 @@ impl Handler<PackagedSplitBatch> for Uploader {
                 fail_point!("uploader:intask:before");
 
                 let mut split_metadata_list = Vec::with_capacity(batch.splits.len());
+                let mut report_splits: Vec<ReportSplit> = Vec::with_capacity(batch.splits.len());
+
                 for packaged_split in batch.splits.iter() {
                     if batch.publish_lock.is_dead() {
                         // TODO: Remove the junk right away?
@@ -327,7 +328,14 @@ impl Handler<PackagedSplitBatch> for Uploader {
                         split_streamer.footer_range.start..split_streamer.footer_range.end,
                     );
 
+                    report_splits.push(ReportSplit {
+                        split_uri: split_store.distant_uri(packaged_split.split_id()).to_string(),
+                        num_merge_ops: split_metadata.num_merge_ops as u32,
+                        len: split_metadata.footer_offsets.end as u64,
+                    });
+
                     split_metadata_list.push(split_metadata);
+
                 }
 
                 metastore
@@ -337,15 +345,7 @@ impl Handler<PackagedSplitBatch> for Uploader {
 
                 let mut packaged_splits_and_metadata = Vec::with_capacity(batch.splits.len());
 
-                let split_uris: Vec<String> = batch.splits.iter()
-                    .map(|split| {
-                        let split_id = split.split_id();
-                        split_store.distant_uri(split_id).to_string()
-                    })
-                    .collect();
-                event_broker.publish(ReportSplitsRequest {
-                    split_uris
-                });
+                event_broker.publish(ReportSplitsRequest { report_splits });
 
                 for (packaged_split, metadata) in batch.splits.into_iter().zip(split_metadata_list) {
                     let upload_result = upload_split(

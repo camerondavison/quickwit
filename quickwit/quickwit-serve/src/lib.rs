@@ -50,7 +50,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use byte_unit::n_mib_bytes;
 pub use format::BodyFormat;
 use futures::{Stream, StreamExt};
@@ -201,12 +201,19 @@ pub async fn serve_quickwit(
     let cluster_change_stream = cluster.ready_nodes_change_stream().await;
 
     let split_cache_root_directory: PathBuf = config.data_dir_path.join("searcher-split-cache");
-    let split_cache: Arc<SplitCache> =
-        Arc::new(SplitCache::with_root_path(split_cache_root_directory));
+    let split_cache_opt: Option<Arc<SplitCache>> =
+        if let Some(split_cache_config) = config.searcher_config.split_cache {
+            let split_cache =
+                SplitCache::with_root_path(split_cache_root_directory, split_cache_config)
+                    .context("Failed to load split cache.")?;
+            Some(Arc::new(split_cache))
+        } else {
+            None
+        };
 
     let searcher_context = Arc::new(SearcherContext::new(
         config.searcher_config.clone(),
-        split_cache,
+        split_cache_opt,
     ));
     let (search_job_placer, search_service) = setup_searcher(
         cluster_change_stream,
@@ -215,6 +222,13 @@ pub async fn serve_quickwit(
         searcher_context,
     )
     .await?;
+
+    // Report new splits to the searcher with the best affinity.
+    // We only do this if quickwit_config has a split cache configured.
+    // TODO fix this oddity.
+    if config.searcher_config.split_cache.is_some() {
+        event_broker.subscribe(search_job_placer.clone());
+    }
 
     let ingest_service = start_indexing_service_if_needed(
         &config,

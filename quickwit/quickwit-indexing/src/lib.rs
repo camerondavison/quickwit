@@ -21,11 +21,9 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use quickwit_actors::{Mailbox, Universe};
 use quickwit_cluster::Cluster;
 use quickwit_common::pubsub::EventBroker;
-use quickwit_common::uri::Uri;
 use quickwit_config::NodeConfig;
 use quickwit_ingest::IngestApiService;
 use quickwit_metastore::Metastore;

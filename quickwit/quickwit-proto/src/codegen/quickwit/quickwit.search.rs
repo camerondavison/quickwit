@@ -41,9 +41,20 @@ pub struct GetKvResponse {
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReportSplit {
+    #[prost(string, tag = "1")]
+    pub split_uri: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub len: u64,
+    #[prost(uint32, tag = "3")]
+    pub num_merge_ops: u32,
+}
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReportSplitsRequest {
-    #[prost(string, repeated, tag = "1")]
-    pub split_uris: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag = "1")]
+    pub report_splits: ::prost::alloc::vec::Vec<ReportSplit>,
 }
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]

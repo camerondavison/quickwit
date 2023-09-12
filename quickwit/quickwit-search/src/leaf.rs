@@ -33,7 +33,7 @@ use quickwit_proto::search::{
 };
 use quickwit_query::query_ast::QueryAst;
 use quickwit_storage::{
-    wrap_storage_with_cache, BundleStorage, MemorySizedCache, OwnedBytes, Storage,
+    wrap_storage_with_cache, BundleStorage, MemorySizedCache, OwnedBytes, SplitCache, Storage,
 };
 use tantivy::collector::Collector;
 use tantivy::directory::FileSlice;
@@ -106,7 +106,11 @@ pub(crate) async fn open_index_with_caches(
     // We wrap the top-level storage with the split cache.
     // This is before the bundle storage: at this point, this storage is reading `.split` files.
     let index_storage_with_split_cache =
-        wrap_storage_with_cache(searcher_context.split_cache.clone(), index_storage);
+        if let Some(split_cache) = searcher_context.split_cache_opt.as_ref() {
+            SplitCache::wrap_storage(split_cache.clone(), index_storage.clone())
+        } else {
+            index_storage.clone()
+        };
 
     let (hotcache_bytes, bundle_storage) = BundleStorage::open_from_split_data(
         index_storage_with_split_cache,

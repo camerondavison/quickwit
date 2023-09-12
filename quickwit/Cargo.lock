@@ -5801,6 +5801,7 @@ dependencies = [
  "quickwit-aws",
  "quickwit-common",
  "quickwit-config",
+ "quickwit-proto",
  "rand 0.8.5",
  "regex",
  "serde",

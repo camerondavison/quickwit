@@ -98,8 +98,14 @@ message GetKVResponse {
 }
 
 
+message ReportSplit {
+    string split_uri = 1;
+    uint64 len = 2;
+    uint32 num_merge_ops = 3;
+}
+
 message ReportSplitsRequest {
-    repeated string split_uris = 1;
+    repeated ReportSplit report_splits = 1;
 }
 
 message ReportSplitsResponse {}

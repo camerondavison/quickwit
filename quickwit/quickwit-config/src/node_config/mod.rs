@@ -110,6 +110,21 @@ impl Default for IndexerConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SplitCacheLimits {
+    pub max_num_bytes: Byte,
+    pub max_num_splits: u32,
+}
+
+impl Default for SplitCacheLimits {
+    fn default() -> SplitCacheLimits {
+        SplitCacheLimits {
+            max_num_bytes: Byte::from_bytes(1_000_000_000), // 1 GB.
+            max_num_splits: 100,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct SearcherConfig {
@@ -120,6 +135,11 @@ pub struct SearcherConfig {
     pub partial_request_cache_capacity: Byte,
     pub max_num_concurrent_split_searches: usize,
     pub max_num_concurrent_split_streams: usize,
+    // Strangely, if None, this will also have the effect of not forwarding
+    // to searcher.
+    // TODO document and fix if necessary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_cache: Option<SplitCacheLimits>,
 }
 
 impl Default for SearcherConfig {
@@ -132,6 +152,7 @@ impl Default for SearcherConfig {
             max_num_concurrent_split_searches: 100,
             aggregation_memory_limit: Byte::from_bytes(500_000_000), // 500M
             aggregation_bucket_limit: 65000,
+            split_cache: None,
         }
     }
 }

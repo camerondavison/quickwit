@@ -322,9 +322,9 @@ impl SearchService for SearchServiceImpl {
     }
 
     async fn report_splits(&self, report_splits: ReportSplitsRequest) -> ReportSplitsResponse {
-        self.searcher_context
-            .split_cache
-            .report_splits(report_splits.split_uris);
+        if let Some(split_cache) = self.searcher_context.split_cache_opt.as_ref() {
+            split_cache.report_splits(report_splits.report_splits);
+        }
         ReportSplitsResponse {}
     }
 }
@@ -418,7 +418,7 @@ pub struct SearcherContext {
     pub split_stream_semaphore: Semaphore,
     /// Recent sub-query cache.
     pub leaf_search_cache: LeafSearchCache,
-    pub split_cache: Arc<SplitCache>,
+    pub split_cache_opt: Option<Arc<SplitCache>>,
 }
 
 impl std::fmt::Debug for SearcherContext {
@@ -442,7 +442,7 @@ impl SearcherContext {
         SearcherContext::new(searcher_config, split_cache)
     }
 
-    pub fn new(searcher_config: SearcherConfig, split_cache: Arc<SplitCache>) -> Self {
+    pub fn new(searcher_config: SearcherConfig, split_cache_opt: Option<Arc<SplitCache>>) -> Self {
         let capacity_in_bytes = searcher_config.split_footer_cache_capacity.get_bytes() as usize;
         let global_split_footer_cache = MemorySizedCache::with_capacity_in_bytes(
             capacity_in_bytes,
@@ -458,6 +458,7 @@ impl SearcherContext {
         let leaf_search_cache = LeafSearchCache::new(
             searcher_config.partial_request_cache_capacity.get_bytes() as usize,
         );
+
         Self {
             searcher_config,
             fast_fields_cache: storage_long_term_cache,
@@ -465,7 +466,7 @@ impl SearcherContext {
             split_footer_cache: global_split_footer_cache,
             split_stream_semaphore,
             leaf_search_cache,
-            split_cache,
+            split_cache_opt,
         }
     }
     // Returns a new instance to track the aggregation memory usage.

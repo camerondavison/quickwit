@@ -17,13 +17,13 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+use quickwit_common::NotNaNf32;
 use serde::Deserialize;
 
 use crate::elastic_query_dsl::bool_query::BoolQuery;
 use crate::elastic_query_dsl::one_field_map::OneFieldMap;
 use crate::elastic_query_dsl::term_query::term_query_from_field_value;
 use crate::elastic_query_dsl::{ConvertableToQueryAst, ElasticQueryDslInner};
-use crate::not_nan_f32::NotNaNf32;
 use crate::query_ast::QueryAst;
 
 #[derive(PartialEq, Eq, Debug, Deserialize, Clone)]

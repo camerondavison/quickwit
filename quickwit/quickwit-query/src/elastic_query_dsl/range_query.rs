@@ -19,11 +19,11 @@
 
 use std::ops::Bound;
 
+use quickwit_common::NotNaNf32;
 use serde::Deserialize;
 
 use crate::elastic_query_dsl::one_field_map::OneFieldMap;
 use crate::elastic_query_dsl::ConvertableToQueryAst;
-use crate::not_nan_f32::NotNaNf32;
 use crate::query_ast::QueryAst;
 use crate::JsonLiteral;
 

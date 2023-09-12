@@ -27,6 +27,7 @@ pub mod io;
 mod kill_switch;
 pub mod metrics;
 pub mod net;
+mod not_nan_f32;
 mod path_hasher;
 mod progress;
 pub mod pubsub;
@@ -52,6 +53,7 @@ use std::str::FromStr;
 
 pub use coolid::new_coolid;
 pub use kill_switch::KillSwitch;
+pub use not_nan_f32::NotNaNf32;
 pub use path_hasher::PathHasher;
 pub use progress::{Progress, ProtectedZoneGuard};
 pub use stream_utils::{BoxStream, ServiceStream};

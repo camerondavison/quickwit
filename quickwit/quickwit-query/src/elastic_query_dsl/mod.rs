@@ -35,6 +35,7 @@ use bool_query::BoolQuery;
 pub use one_field_map::OneFieldMap;
 use phrase_prefix_query::MatchPhrasePrefixQuery;
 pub(crate) use query_string_query::QueryStringQuery;
+use quickwit_common::NotNaNf32;
 use range_query::RangeQuery;
 use term_query::TermQuery;
 
@@ -43,7 +44,6 @@ use crate::elastic_query_dsl::match_phrase_query::MatchPhraseQuery;
 use crate::elastic_query_dsl::match_query::MatchQuery;
 use crate::elastic_query_dsl::multi_match::MultiMatchQuery;
 use crate::elastic_query_dsl::terms_query::TermsQuery;
-use crate::not_nan_f32::NotNaNf32;
 use crate::query_ast::QueryAst;
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone, Copy, Default)]

@@ -21,6 +21,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::ops::Bound;
 
 use anyhow::Context;
+use quickwit_common::NotNaNf32;
 use serde::{Deserialize, Serialize};
 use tantivy::query_grammar::{
     Delimiter, Occur, UserInputAst, UserInputBound, UserInputLeaf, UserInputLiteral,
@@ -28,7 +29,6 @@ use tantivy::query_grammar::{
 use tantivy::schema::Schema as TantivySchema;
 use tantivy::tokenizer::TokenizerManager;
 
-use crate::not_nan_f32::NotNaNf32;
 use crate::query_ast::tantivy_query_ast::TantivyQueryAst;
 use crate::query_ast::{self, BuildTantivyAst, FullTextMode, FullTextParams, QueryAst};
 use crate::{BooleanOperand, InvalidQuery, JsonLiteral};

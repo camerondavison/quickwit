@@ -25,6 +25,7 @@ use bytes::Bytes;
 use chitchat::transport::ChannelTransport;
 use quickwit_actors::{Mailbox, Universe};
 use quickwit_cluster::create_cluster_for_test;
+use quickwit_common::pubsub::EventBroker;
 use quickwit_common::rand::append_random_suffix;
 use quickwit_common::uri::Uri;
 use quickwit_config::{
@@ -55,6 +56,7 @@ pub struct TestSandbox {
     storage: Arc<dyn Storage>,
     add_docs_id: AtomicUsize,
     universe: Universe,
+    event_broker: EventBroker,
     _temp_dir: tempfile::TempDir,
 }
 
@@ -71,7 +73,7 @@ impl TestSandbox {
         doc_mapping_yaml: &str,
         indexing_settings_yaml: &str,
         search_fields: &[&str],
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<TestSandbox> {
         let node_id = append_random_suffix("test-node");
         let transport = ChannelTransport::default();
         let cluster = create_cluster_for_test(Vec::new(), &["indexer"], &transport, true)
@@ -100,6 +102,7 @@ impl TestSandbox {
         let index_uid = metastore.create_index(index_config.clone()).await?;
         let storage = storage_resolver.resolve(&index_uri).await?;
         let universe = Universe::with_accelerated_time();
+        let event_broker = EventBroker::default();
         let queues_dir_path = temp_dir.path().join(QUEUES_DIR_NAME);
         let ingest_api_service =
             init_ingest_api(&universe, &queues_dir_path, &IngestApiConfig::default()).await?;
@@ -112,6 +115,7 @@ impl TestSandbox {
             metastore.clone(),
             Some(ingest_api_service),
             storage_resolver.clone(),
+            event_broker.clone(),
         )
         .await?;
         let (indexing_service, _indexing_service_handle) =
@@ -125,6 +129,7 @@ impl TestSandbox {
             storage,
             add_docs_id: AtomicUsize::default(),
             universe,
+            event_broker,
             _temp_dir: temp_dir,
         })
     }
