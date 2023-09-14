@@ -26,14 +26,12 @@ use quickwit_common::uri::Uri;
 use quickwit_config::SplitCacheLimits;
 use ulid::Ulid;
 
-use crate::split_cache::ulid_from_split_uri;
-
-type LastModifiedDate = u64;
+type LastAccessDate = u64;
 
 #[derive(Clone, Copy)]
-struct SplitKey {
-    last_accessed: LastModifiedDate,
-    split_ulid: Ulid,
+pub(crate) struct SplitKey {
+    pub last_accessed: LastAccessDate,
+    pub split_ulid: Ulid,
 }
 
 impl PartialOrd for SplitKey {
@@ -58,13 +56,13 @@ impl Eq for SplitKey {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Status {
-    Candidate { uri: Uri },
+    Candidate(CandidateSplit),
     Downloading,
     OnDisk { num_bytes: u64 },
 }
 
 pub struct SplitInfo {
-    split_key: SplitKey,
+    pub(crate) split_key: SplitKey,
     status: Status,
 }
 
@@ -94,7 +92,7 @@ impl SplitTable {
     }
 }
 
-fn compute_timestamp(start: Instant) -> LastModifiedDate {
+fn compute_timestamp(start: Instant) -> LastAccessDate {
     start.elapsed().as_micros() as u64
 }
 
@@ -125,7 +123,10 @@ impl SplitTable {
         let split_queue: &mut BTreeSet<SplitKey> = match split_info.status {
             Status::Candidate { .. } => &mut self.candidate_splits,
             Status::Downloading => &mut self.downloading_split,
-            Status::OnDisk { .. } => &mut self.on_disk_splits,
+            Status::OnDisk { num_bytes } => {
+                self.on_disk_bytes -= num_bytes;
+                &mut self.on_disk_splits
+            }
         };
         let is_in_queue = split_queue.remove(&split_info.split_key);
         assert!(is_in_queue);
@@ -160,13 +161,15 @@ impl SplitTable {
                 split_info.split_key.last_accessed = timestamp;
                 split_info
             } else {
-                let uri = split_uri(storage_uri, split_ulid);
                 SplitInfo {
                     split_key: SplitKey {
                         split_ulid,
                         last_accessed: timestamp,
                     },
-                    status: Status::Candidate { uri },
+                    status: Status::Candidate(CandidateSplit {
+                        storage_uri: storage_uri.clone(),
+                        split_ulid,
+                    }),
                 }
             }
         })
@@ -196,16 +199,13 @@ impl SplitTable {
                         last_accessed: compute_timestamp(start_time),
                         split_ulid,
                     },
-                    status: Status::Downloading,
+                    status,
                 }
             }
         });
     }
 
-    pub(crate) fn report(&mut self, split_uri: Uri) {
-        let Some(split_ulid) = ulid_from_split_uri(split_uri.as_str()) else {
-            return;
-        };
+    pub(crate) fn report(&mut self, storage_uri: Uri, split_ulid: Ulid) {
         self.mutate_split(split_ulid, move |split_info_opt| {
             if let Some(split_info) = split_info_opt {
                 return split_info;
@@ -215,7 +215,10 @@ impl SplitTable {
                     last_accessed: 0u64,
                     split_ulid,
                 },
-                status: Status::Candidate { uri: split_uri },
+                status: Status::Candidate(CandidateSplit {
+                    storage_uri,
+                    split_ulid,
+                }),
             }
         });
     }
@@ -229,17 +232,85 @@ impl SplitTable {
         );
     }
 
-    pub(crate) fn start_download(&mut self, split_ulid: Ulid) {
-        self.change_split_status(split_ulid, Status::Downloading);
+    /// Change the state of the given split from candidate to downloading state,
+    /// and returns its URI.
+    ///
+    /// This function does NOT trigger the download itself. It is up to
+    /// the caller to actually initiate the download.
+    pub(crate) fn start_download(&mut self, split_ulid: Ulid) -> Option<CandidateSplit> {
+        let mut split_info = self.remove(split_ulid)?;
+        if let Status::Candidate(candidate_split) = split_info.status {
+            Some(candidate_split)
+        } else {
+            self.insert(split_info);
+            None
+        }
     }
 
-    fn peek_best_candidate(&self) -> Option<&SplitInfo> {
-        let split_key = self.candidate_splits.last()?;
-        self.split_to_status.get(&split_key.split_ulid)
+    pub(crate) fn best_candidate(&self) -> Option<SplitKey> {
+        self.candidate_splits.last().copied()
     }
 
-    fn peek_lowest_on_disk(&self) -> Option<&SplitInfo> {
-        let split_key = self.on_disk_splits.first()?;
-        self.split_to_status.get(&split_key.split_ulid)
+    fn is_out_of_limits(&self) -> bool {
+        if self.candidate_splits.is_empty() {
+            return false;
+        }
+        if self.on_disk_splits.len() + self.downloading_split.len()
+            > self.limits.max_num_splits as usize
+        {
+            return true;
+        }
+        if self.on_disk_bytes > self.limits.max_num_bytes.get_bytes() {
+            return true;
+        }
+        false
     }
+
+    /// Evicts splits to reach the target limits.
+    ///
+    /// Returns false if the first candidate for eviction is
+    /// fresher that the candidate split. (Note this is suboptimal.
+    ///
+    /// Returns None
+    pub fn make_room_for_split(&mut self, last_access_date: LastAccessDate) -> Option<Vec<Ulid>> {
+        let mut split_infos = Vec::new();
+        while self.is_out_of_limits() {
+            if let Some(first_split) = self.on_disk_splits.first() {
+                if first_split.last_accessed > last_access_date {
+                    // This is not worth doing the eviction.
+                    break;
+                }
+                split_infos.extend(self.remove(first_split.split_ulid));
+            } else {
+                break;
+            }
+        }
+        // We are still out of limits.
+        // Let's not go through with the eviction, and reinsert the splits.
+        if self.is_out_of_limits() {
+            for split_info in split_infos {
+                self.insert(split_info);
+            }
+            None
+        } else {
+            Some(
+                split_infos
+                    .into_iter()
+                    .map(|split_info| split_info.split_key.split_ulid)
+                    .collect(),
+            )
+        }
+    }
+
+    fn evict_one(&mut self) -> Option<SplitInfo> {
+        let split_first = self.on_disk_splits.first().copied()?;
+        let split_ulid = split_first.split_ulid;
+        self.remove(split_first.split_ulid)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CandidateSplit {
+    storage_uri: Uri,
+    split_ulid: Ulid,
 }

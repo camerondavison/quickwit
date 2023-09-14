@@ -329,7 +329,8 @@ impl Handler<PackagedSplitBatch> for Uploader {
                     );
 
                     report_splits.push(ReportSplit {
-                        split_uri: split_store.distant_uri(packaged_split.split_id()).to_string(),
+                        storage_uri: split_store.remote_uri().to_string(),
+                        split_id: packaged_split.split_id().to_string(),
                         num_merge_ops: split_metadata.num_merge_ops as u32,
                         len: split_metadata.footer_offsets.end as u64,
                     });

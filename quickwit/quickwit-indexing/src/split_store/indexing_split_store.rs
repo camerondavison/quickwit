@@ -106,12 +106,8 @@ impl IndexingSplitStore {
         }
     }
 
-    pub fn distant_uri(&self, split_id: &str) -> Uri {
-        self.inner
-            .remote_storage
-            .uri()
-            .join(PathBuf::from(quickwit_common::split_file(split_id)))
-            .unwrap()
+    pub fn remote_uri(&self) -> &Uri {
+        self.inner.remote_storage.uri()
     }
 
     fn split_path(&self, split_id: &str) -> PathBuf {

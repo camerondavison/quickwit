@@ -99,9 +99,10 @@ message GetKVResponse {
 
 
 message ReportSplit {
-    string split_uri = 1;
-    uint64 len = 2;
-    uint32 num_merge_ops = 3;
+    string storage_uri = 1;
+    string split_id = 2;
+    uint64 len = 3;
+    uint32 num_merge_ops = 4;
 }
 
 message ReportSplitsRequest {

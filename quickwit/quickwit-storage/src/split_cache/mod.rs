@@ -17,8 +17,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-// mod download_queue;
-// mod split_state_table;
+mod download_task;
 mod split_table;
 
 use std::collections::HashMap;
@@ -40,7 +39,7 @@ use ulid::Ulid;
 
 // use crate::split_cache::split_state_table::{SplitGuard, SplitStateTable};
 use crate::split_cache::split_table::{SplitGuard, SplitTable};
-use crate::{wrap_storage_with_cache, Storage, StorageCache};
+use crate::{error, wrap_storage_with_cache, Storage, StorageCache};
 
 struct SplitCacheBackingStorage {
     split_cache: Arc<SplitCache>,
@@ -100,14 +99,15 @@ impl SplitCache {
     pub fn report_splits(&self, report_splits: Vec<ReportSplit>) {
         let mut split_table = self.split_table.lock().unwrap();
         for report_split in report_splits {
-            match Uri::from_str(&report_split.split_uri) {
-                Ok(split_uri) => {
-                    split_table.report(split_uri);
-                }
-                Err(uri_err) => {
-                    error!("Invalid split uri");
-                }
-            }
+            let Ok(split_ulid) = Ulid::from_str(&report_split.split_id) else {
+                error!(split_id=%report_split.split_id, "Received invalid split ulid. Ignoring.");
+                continue;
+            };
+            let Ok(storage_uri) = Uri::from_str(&report_split.storage_uri) else {
+                error!(storage_uri=%report_split.storage_uri, "Received invalid storage uri. Ignoring.");
+                continue;
+            };
+            split_table.report(storage_uri, split_ulid);
         }
     }
 }

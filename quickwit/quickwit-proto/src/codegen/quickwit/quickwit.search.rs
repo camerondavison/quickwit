@@ -43,10 +43,12 @@ pub struct GetKvResponse {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReportSplit {
     #[prost(string, tag = "1")]
-    pub split_uri: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "2")]
+    pub storage_uri: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub split_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "3")]
     pub len: u64,
-    #[prost(uint32, tag = "3")]
+    #[prost(uint32, tag = "4")]
     pub num_merge_ops: u32,
 }
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]

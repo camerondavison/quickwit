@@ -76,7 +76,7 @@ impl EventSubscriber<ReportSplitsRequest> for SearchJobPlacer {
         for report_split in evt.report_splits {
             let Some(node_addr) = nodes
                 .keys()
-                .max_by_key(|node_addr| node_affinity(*node_addr, &report_split.split_uri))
+                .max_by_key(|node_addr| node_affinity(*node_addr, &report_split.split_id))
             else {
                 // This actually never happens thanks to the if-condition at the
                 // top of this function.
